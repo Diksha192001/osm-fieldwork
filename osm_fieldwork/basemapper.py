@@ -19,11 +19,13 @@
 #
 """Module for generating basemaps from various providers."""
 
+
 import argparse
 import concurrent.futures
 import logging
 import queue
 import re
+from io import BytesIO
 import sys
 import threading
 from pathlib import Path
@@ -52,7 +54,6 @@ from osm_fieldwork.yamlfile import YamlFile
 
 log = logging.getLogger(__name__)
 
-
 def dlthread(
     dest: str,
     mirrors: list,
@@ -70,11 +71,7 @@ def dlthread(
     if len(tiles) == 0:
         # epdb.st()
         return
-    # counter = -1
 
-    # start = datetime.now()
-
-    # totaltime = 0.0
     log.info("Downloading %d tiles in thread %d to %s" % (len(tiles), threading.get_ident(), dest))
     for tile in tiles:
         filespec = f"{tile[2]}/{tile[1]}/{tile[0]}"
@@ -125,7 +122,8 @@ class BaseMapper(object):
 
     def __init__(
         self,
-        boundary: str,
+        # indicates that values either of the type str or ByteIO can be accepted
+        boundary: Union[str, BytesIO],
         base: str,
         source: str,
         xy: bool,
@@ -133,8 +131,8 @@ class BaseMapper(object):
         """Create an tile basemap for ODK Collect.
 
         Args:
-            boundary (str): A BBOX string or GeoJSON file of the AOI.
-                The GeoJSON can contain multiple geometries.
+            boundary (Union[str, BytesIO]): A BBOX string or GeoJSON file or BytesIO object.
+                  The GeoJSON can contain multiple geometries.
             base (str): The base directory to cache map tile in
             source (str): The upstream data source for map tiles
             xy (bool): Whether to swap the X & Y fields in the TMS URL
@@ -272,18 +270,24 @@ class BaseMapper(object):
 
     def makeBbox(
         self,
-        boundary: str,
+        boundary: Union[str, BytesIO],
     ) -> tuple[float, float, float, float]:
         """Make a bounding box from a shapely geometry.
 
         Args:
-            boundary (str): A BBOX string or GeoJSON file of the AOI.
-                The GeoJSON can contain multiple geometries.
+            boundary (Union[str, BytesIO]): A BBOX string or GeoJSON file or BytesIO object.
+                  The GeoJSON can contain multiple geometries.
 
         Returns:
             (list): The bounding box coordinates
         """
-        if not boundary.lower().endswith((".json", ".geojson")):
+
+        # Updated makeBbox method to handle GeoJSON in BytesIO format
+        if isinstance(boundary, BytesIO):
+            boundary.seek(0)
+            geojson_boundary = boundary.getvalue().decode('utf-8')
+            poly = geojson.loads(geojson_boundary)
+        elif isinstance(boundary, str) and not boundary.lower().endswith((".json", ".geojson")):
             # Is BBOX string
             try:
                 if "," in boundary:
@@ -303,16 +307,16 @@ class BaseMapper(object):
                 msg = f"Failed to parse BBOX string: {boundary}"
                 log.error(msg)
                 raise ValueError(msg) from None
+        else:
+            raise ValueError("Invalid boundary format. Acceptable formats are BBOX string or (.json, .geojson) file or BytesIO object")
 
-        log.debug(f"Reading geojson file: {boundary}")
-        with open(boundary, "r") as f:
-            poly = geojson.load(f)
         if "features" in poly:
             geometry = shape(poly["features"][0]["geometry"])
         elif "geometry" in poly:
             geometry = shape(poly["geometry"])
         else:
             geometry = shape(poly)
+
 
         if isinstance(geometry, list):
             # Multiple geometries
@@ -420,7 +424,7 @@ def create_basemap_file(
 
     Args:
         verbose (bool, optional): Enable verbose output if True.
-        boundary (str, optional): The boundary for the area you want.
+        boundary (Union[str, BytesIO]): The boundary for a BBOX string or GeoJSON file or BytesIO object.
         tms (str, optional): Custom TMS URL.
         xy (bool, optional): Swap the X & Y coordinates when using a
             custom TMS if True.
@@ -560,7 +564,7 @@ def main():
     args = parser.parse_args()
 
     if not args.boundary:
-        log.error("You need to specify a boundary! (file or bbox)")
+        log.error("You need to specify a boundary!")
         parser.print_help()
         quit()
 
@@ -576,6 +580,7 @@ def main():
             log.error("")
             parser.print_help()
             quit()
+
         boundary_parsed = args.boundary[0]
     elif len(args.boundary) == 4:
         boundary_parsed = ",".join(args.boundary)

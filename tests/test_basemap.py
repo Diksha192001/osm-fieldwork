@@ -22,6 +22,7 @@
 import logging
 import os
 import shutil
+from io import BytesIO
 
 from osm_fieldwork.basemapper import BaseMapper
 from osm_fieldwork.sqlite import DataFile
@@ -32,20 +33,13 @@ rootdir = os.path.dirname(os.path.abspath(__file__))
 boundary = f"{rootdir}/testdata/Rollinsville.geojson"
 outfile = f"{rootdir}/testdata/rollinsville.mbtiles"
 base = "./tiles"
-# boundary = open(infile, "r")
-# poly = geojson.load(boundary)
-# if "features" in poly:
-#    geometry = shape(poly["features"][0]["geometry"])
-# elif "geometry" in poly:
-#    geometry = shape(poly["geometry"])
-# else:
-#    geometry = shape(poly)
 
 
-def test_create():
-    """See if the file got loaded."""
+def test_create_with_bytesio():
     hits = 0
-    basemap = BaseMapper(boundary, base, "topo", False)
+    with open(boundary, "rb") as geojson_file:
+        boundary_bytesio = BytesIO(geojson_file.read())
+    basemap = BaseMapper(boundary_bytesio, base, "topo", False)
     tiles = list()
     for level in [8, 9, 10, 11, 12]:
         basemap.getTiles(level)
@@ -67,4 +61,4 @@ def test_create():
 
 
 if __name__ == "__main__":
-    test_create()
+    test_create_with_bytesio()
